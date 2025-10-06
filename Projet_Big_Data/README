@@ -1,0 +1,165 @@
+Pour éxecuter le code:
+-copier ce dossier Projet_Big_Data dans ~/Documents/hadoop_project
+-utilisez google colab pour executer le serveur d'entrainement et de prédiction.
+-la dernière cellule va générer un URL de Ngrok, copiez et collez le dans les scripts /AirflowDir/train_model.py et /Airflow/Predict.py en ajoutant /train_model ou /predict à la fin de l'URL
+-Pull l'image docker: docker pull aminbenali/bigdata:VCF
+-créer le réseau: docker network create --driver=bridge hadoop
+-créer master hadoop: docker run -itd -v ~/Documents/hadoop_project/:/shared_volume --net=hadoop -p 9870:9870 -p 8088:8088 -p 7077:7077 -p 19888:19888 -p 8080:8080 -p 9200:9200 -p 5601:5601 -p 5000:5000 --name hadoop-master-ALL --hostname hadoop-master aminbenali/bigdata:VCF
+-créér slaves:
+docker run -itd -p 8040:8042 --net=hadoop --name hadoop-slave1 --hostname hadoop-slave1 aminbenali/bigdata:VCF
+docker run -itd -p 8041:8042 --net=hadoop --name hadoop-slave2 --hostname hadoop-slave2 aminbenali/bigdata:VCF
+-lancez hadoop : ./start-hadoop.sh
+-lancez zookeeper et executer la commande : unset CLASSPATH
+-lancer kafka et executez:
+./kafka-topics.sh --create \
+  --bootstrap-server localhost:9092 \
+  --replication-factor 1 \
+  --partitions 3 \
+  --topic tesla_twitter_data
+
+./kafka-topics.sh --create \
+  --bootstrap-server localhost:9092 \
+  --replication-factor 1 \
+  --partitions 3 \
+  --topic tesla_stock_prices
+
+-lancez spark streaming pour tweets et stock_prices à partie de ce dossier:
+spark-submit --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.2.4,org.elasticsearch:elasticsearch-spark-30_2.12:8.4.0 spark_streaming_tweets.py
+spark-submit --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.2.4,org.elasticsearch:elasticsearch-spark-30_2.12:8.4.0 spark_streaming_stock_prices.py
+
+-lancez elasticsearch  et kibana en utilisant le user elk_user:
+sudo -u elk_user ./usr/local/elasticsearch/bin/elasticsearch
+sudo -u elk_user ./usr/local/elasticsearch/bin/kibana
+
+executez dans le UI de kibana la création des indexes:
+
+
+PUT /twitter_data
+{
+  "mappings": {
+    "properties": {
+      "time": { "type": "date", "format": "yyyy-MM-dd HH:mm:ss" },
+      "username": { "type": "keyword" },
+      "followers": { "type": "integer" },
+      "tweet": {
+        "type": "text",
+        "analyzer": "standard"
+      }
+    }
+  }
+}
+
+PUT /stocks
+{
+  "mappings": {
+    "properties": {
+      "time": { 
+        "type": "keyword" 
+      },
+      "stock_price": { 
+        "type": "double" 
+      }
+    }
+  }
+}
+
+PUT /predictions
+{
+  "mappings": {
+    "properties": {
+      "date": {
+        "type": "date"
+      },
+      "predicted_stock_price": {
+        "type": "double"
+      }
+    }
+  }
+}
+
+PUT /all_data_except_predictions
+{
+  "mappings": {
+    "properties": {
+      "time": {
+        "type": "date"
+      },
+      "stock_price": {
+        "type": "float"
+      },
+      "username": {
+        "type": "keyword"
+      },
+      "followers": {
+        "type": "long"
+      },
+      "tweet": {
+        "type": "text"
+      },
+      "sentiment_scores": {
+        "type": "float"
+      },
+      "sentiment": {
+        "type": "keyword"
+      },
+      "weighted_sentiment": {
+        "type": "float"
+      }
+    }
+  }
+}
+
+
+- Pour airflow, executez les commandes suivantes:
+cd /root/airflow
+nano airflow.cfg 
+changez ou ajoutez ces configurations:
+--------------------------------------------
+dags_folder = /shared_volume/Projet_Big_Data/AirflowDir/dags
+logs_folder = /shared_volume/Projet_Big_Data/AirflowDir/logs
+
+
+[core]
+executor = LocalExecutor
+sql_alchemy_conn = postgresql+psycopg2://airflow:airflow@localhost:5432/airflow_db
+
+---------------------------------------------
+pip install psycopg2-binary
+sudo apt update
+sudo apt install postgresql postgresql-contrib -y
+
+sudo nano /etc/postgresql/10/main/pg_hba.conf
+------------------------------
+changez: #### peer ----> trust
+-------------------------------
+
+
+sudo service postgresql start
+sudo service postgresql status
+
+psql -U postgres
+
+CREATE USER airflow WITH PASSWORD 'airflow';
+CREATE DATABASE airflow_db;
+GRANT ALL PRIVILEGES ON DATABASE airflow_db TO airflow;
+\q
+
+airflow users create \
+    --username airflow \
+    --firstname airflow \
+    --lastname airflow \
+    --role Admin \
+    -- password airflow \
+    --email admin@example.com
+
+airflow db init
+airflow scheduler
+airflow webserver
+
+
+une fois cela est fait, vous etes pret à tester le pipeline
+executez dans le dossier Project_Big_Data:
+-python3 ProducingData.py
+-vous pouvez déclencher manuallement le dag airflow à partir de l'UI
+-une fois réalisé, vous devez trouver les données sur Elasticsearch pretes pour l'utilisation.
+
